@@ -294,11 +294,21 @@ class RegistrationService(object):
 		self.servicehost = servicehost
 		
 		
-	def CreateRegistration(self, regid,courseid,userid,fname,lname):
+	def CreateRegistration(self, regid,courseid,userid,fname,lname,email=None):
 		sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
 		if regid is None:
 			regid = str(uuid.uuid1())
-		data = sc.scormcloud_call(method='rustici.registration.createRegistration', appid=self.appid, courseid=courseid, regid=regid, fname=fname, lname=lname,learnerid=userid)
+		params = {}
+		params['method'] = "rustici.registration.createRegistration"
+		params['appid'] = self.appid
+		params['courseid'] = courseid
+		params['regid'] = regid
+		params['fname'] = fname
+		params['lname'] = lname
+		params['learnerid'] = userid
+		if email is not None:
+			params['email'] = email
+		data = sc.scormcloud_call(**params)
 		#logging.info('CreateRegistration result: ' + str(data))
 		xmldoc = minidom.parseString(data)
 		successNodes = xmldoc.getElementsByTagName('success')
