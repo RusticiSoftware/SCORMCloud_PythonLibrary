@@ -61,16 +61,16 @@ class SCORMCloudAPI(object):
         return md5_hash.hexdigest()
         
     def encode_and_sign(self, dictionary):
-        '''URL encodes the data in the dictionary, and signs it using the
+		'''URL encodes the data in the dictionary, and signs it using the
         given secret, if a secret was given.
         '''
-        dictionary['appid'] = self.appid
-        dictionary['ts'] = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        dictionary = make_utf8(dictionary)
-        if self.secret:
-            dictionary['sig'] = self.sign(dictionary)
-            
-        return urllib.urlencode(dictionary)
+		dictionary['appid'] = self.appid
+		dictionary['ts'] = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+		dictionary['applib'] = "python"
+		dictionary = make_utf8(dictionary)
+		if self.secret:
+			dictionary['sig'] = self.sign(dictionary)
+		return urllib.urlencode(dictionary)
 
     
     def scormcloud_call(self, **kwargs):
