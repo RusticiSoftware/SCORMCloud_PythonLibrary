@@ -7,6 +7,7 @@ import logging
 import copy
 import webbrowser
 import datetime
+import re
 
 import cgi
 # Smartly import hashlib and fall back on md5
@@ -35,10 +36,11 @@ def make_utf8(dictionary):
     return result
 
 class SCORMCloudAPI(object):
-    def __init__(self, appid, secret, servicehost):        
+    def __init__(self, appid, secret, servicehost, origin='rusticisoftware.pythonlibrary.1.1.2'):
         self.appid = appid
         self.secret = secret
         self.servicehost = servicehost
+        self.origin = origin;
         self.__handler_cache = {}
         
     def __repr__(self):
@@ -65,6 +67,7 @@ class SCORMCloudAPI(object):
         given secret, if a secret was given.
         '''
 		dictionary['appid'] = self.appid
+		dictionary['origin'] = self.origin;
 		dictionary['ts'] = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
 		dictionary['applib'] = "python"
 		dictionary = make_utf8(dictionary)
@@ -671,3 +674,14 @@ class RegistrationData(object):
         for reg in regs:
             allResults.append(RegistrationData(reg))
         return allResults
+
+class ScormEngineUtilities(object):
+	@staticmethod
+	def GetCanonicalOriginString(organization, application, version):
+		nameRegex = re.compile(r'[^a-z0-9]')
+		versionRegex = re.compile(r'[^\w\.\-]')
+		organizationComponent = nameRegex.sub('', organization.lower())
+		applicationComponent = nameRegex.sub('', application.lower())
+		versionComponent = versionRegex.sub('', version.lower())
+
+		return "%s.%s.%s" % (organizationComponent, applicationComponent, versionComponent)
