@@ -17,8 +17,10 @@ except ImportError: from md5 import md5
 from xml.dom import minidom
 import uuid
 
+
 def make_utf8(dictionary):
-    '''Encodes all Unicode strings in the dictionary to UTF-8. Converts
+    '''
+    Encodes all Unicode strings in the dictionary to UTF-8. Converts
     all other objects to regular strings.
     
     Returns a copy of the dictionary, doesn't touch the original.
@@ -35,20 +37,47 @@ def make_utf8(dictionary):
     
     return result
 
-class SCORMCloudAPI(object):
-    def __init__(self, appid, secret, servicehost, origin='rusticisoftware.pythonlibrary.1.1.2'):
+
+class Configuration(object):
+    def __init__(self, appid, secret, serviceurl, origin='rusticisoftware.pythonlibrary.2.0.0'):
         self.appid = appid
         self.secret = secret
-        self.servicehost = servicehost
+        self.serviceurl = serviceurl
         self.origin = origin;
+
+    def __repr__(self):
+        return 'Configuration for AppID %s from origin %s' % (self.appid, self.origin)
+        
+class ScormCloudService(object):
+    def __init__(self, configuration)
+        self.config = configuration
         self.__handler_cache = {}
         
-    def __repr__(self):
-        '''Returns a string representation of this object.'''
-        return '[appid for key "%s"]' % self.appid
-        
+    @classmethod
+    def withconfig(cls, config):
+        cls(config)
+
+    @classmethod
+    def withargs(cls, appid, secret, serviceurl, origin):
+        cls(Configuration(appid, secret, serviceurl, origin))
+
     def  __getattr__(self, attrib):    
         return self.attrib
+
+    def get_course_service(self):
+        return CourseService(self)
+
+    def get_debug_service(self):
+        return DebugService(self)
+
+    def get_registration_service(self):
+        return RegistrationService(self)
+
+    def get_reporting_service(self):
+        return ReportingService(self)
+
+    def get_upload_service(self):
+        return UploadService(self)
         
     def sign(self, dictionary):
         data = [self.secret]
@@ -84,43 +113,28 @@ class SCORMCloudAPI(object):
         cloudsocket.close()
         return reply
     
-                
-
-
-# ************   Debug Service   **********************
-#*******************************************************
 
 class DebugService(object):
-    def __init__(self, appid, secret, servicehost):
-        self.appid = appid
-        self.secret = secret
-        self.servicehost = servicehost        
+    def __init__(self, service)
+        self.service = service
+
+    def ping(self):
+        data = self.service.scormcloud_call(method='rustici.debug.ping')
+        xmldoc = minidom.parseString(data)
+        return xmldoc.documentElement.attributes['stat'].value == 'ok'
     
-    def CloudAuthPing(self):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
-        data = sc.scormcloud_call(method='rustici.debug.authPing')
-        xmldoc = minidom.parseString(data)
-        #logging.info('cloudauthping: ' + str(xmldoc.documentElement.attributes['stat'].value))
-        return xmldoc.documentElement.attributes['stat'].value == 'ok'
-
-    def CloudPing(self):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
-        data = sc.scormcloud_call(method='rustici.debug.ping')
+    def authping(self):
+        data = self.service.scormcloud_call(method='rustici.debug.authPing')
         xmldoc = minidom.parseString(data)
         return xmldoc.documentElement.attributes['stat'].value == 'ok'
 
 
-# ************   Upload Service   **********************
-#*******************************************************
 class UploadService(object):
-    def __init__(self, appid, secret, servicehost):
-        self.appid = appid
-        self.secret = secret
-        self.servicehost = servicehost
+    def __init__(self, service):
+        self.service = service
         
-    def GetUploadToken(self):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
-        data = sc.scormcloud_call(method='rustici.upload.getUploadToken')
+    def get_upload_token(self):
+        data = self.service.scormcloud_call(method='rustici.upload.getUploadToken')
         xmldoc = minidom.parseString(data)
         serverNodes = xmldoc.getElementsByTagName('server')
         tokenidNodes = xmldoc.getElementsByTagName('id')
@@ -136,12 +150,7 @@ class UploadService(object):
         else:
             return None
 
-    #deprecated for library uniformity
-    def GetUploadLink(self,importurl):
-        return GetUploadUrl(importurl)
-
-    def GetUploadUrl(self,importurl):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def get_upload_url(self, callbackurl):
         token = self.GetUploadToken()
         if token:
             paramString = 'method=rustici.upload.uploadFile&appid=%s&token=%s&redirecturl=%s' % (self.appid, token.tokenid, importurl)
@@ -151,7 +160,7 @@ class UploadService(object):
                 key,value = item.split('=')
                 params[key] = value
             
-            sig = sc.encode_and_sign(params)
+            sig = self.service.encode_and_sign(params)
             url =  '%s/api?' % (self.servicehost)
             url = url + sig
     
@@ -159,66 +168,51 @@ class UploadService(object):
         else:
             return None
         
-    def DeleteFile(self,location):
+    def delete_file(self, location):
         locParts = location.split("/")
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
         params = {}
         params['file'] = locParts[1]
         params['method'] = "rustici.upload.deleteFiles"
         
-        return sc.scormcloud_call(**params) 
+        return self.service.scormcloud_call(**params) 
         
     
-        
-# ************   Course Service   **********************
-#*******************************************************
 class CourseService(object):
-    def __init__(self, appid, secret, servicehost):
-        self.appid = appid
-        self.secret = secret
-        self.servicehost = servicehost
+    def __init__(self, service):
+        self.service = service
         
-    def ImportUploadedCourse(self,courseid,path):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def import_uploaded_course(self, courseid, path):
         if courseid is None:
             courseid = str(uuid.uuid1())
-        data = sc.scormcloud_call(method='rustici.course.importCourse', path=path, courseid=courseid)
+        data = self.service.scormcloud_call(method='rustici.course.importCourse', path=path, courseid=courseid)
         #logging.debug('import response: ' + data)
         ir = ImportResult.ConvertToImportResults(data)
         return ir
     
-    def DeleteCourse(self, courseid, deleteLatestVersionOnly = False):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def delete_course(self, courseid, deleteLatestVersionOnly=False):
         params = {}
         params['courseid'] = courseid
         params['method'] = "rustici.course.deleteCourse"
         if deleteLatestVersionOnly:
             params['versionid'] = 'latest'
-        data = sc.scormcloud_call(**params)
+        data = self.service.scormcloud_call(**params)
 
-    def GetAssets(self, courseid, path=None):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def get_assets(self, courseid, path=None):
         if (path is not None):
-            data = sc.scormcloud_call(method='rustici.course.getAssets',courseid=courseid, path=path)
+            data = self.service.scormcloud_call(method='rustici.course.getAssets',courseid=courseid, path=path)
         else:
-            data = sc.scormcloud_call(method='rustici.course.getAssets',courseid=courseid)
+            data = self.service.scormcloud_call(method='rustici.course.getAssets',courseid=courseid)
         return data
         
-    def GetCourseList(self, courseIdFilterRegex = None):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def get_course_list(self, courseIdFilterRegex=None):
         if courseIdFilterRegex is not None:
-            data = sc.scormcloud_call(method='rustici.course.getCourseList', filter=courseIdFilterRegex)
+            data = self.service.scormcloud_call(method='rustici.course.getCourseList', filter=courseIdFilterRegex)
         else:
-            data = sc.scormcloud_call(method='rustici.course.getCourseList')
+            data = self.service.scormcloud_call(method='rustici.course.getCourseList')
         courseList = CourseData.ConvertToCourseDataList(data)
         return courseList
 
-    #deprecated for library uniformity
-    def GetPreviewLink(self, courseid, redirecturl):
-        return GetPreviewUrl(courseid, redirecturl)
-        
-    def GetPreviewUrl(self, courseid, redirecturl,stylesheetUrl = None):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def get_preview_url(self, courseid, redirecturl,stylesheetUrl=None):
         params = {}
         params['method'] = "rustici.course.preview"
         params['courseid'] = courseid
@@ -226,19 +220,17 @@ class CourseService(object):
         if stylesheetUrl is not None:
             params['stylesheet'] = stylesheetUrl
         
-        sig = sc.encode_and_sign(params)
+        sig = self.service.encode_and_sign(params)
         url = '%s?' % (self.servicehost + '/api')
         url = url + sig
         logging.info('preview link: '+url)
         return url
 
-    def GetCourseMetadata(self, courseid):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
-        data = sc.scormcloud_call(method='rustici.course.getMetadata', courseid=courseid)
+    def get_course_metadata(self, courseid):
+        data = self.service.scormcloud_call(method='rustici.course.getMetadata', courseid=courseid)
         return data
 
-    def GetPropertyEditorUrl(self, courseid, stylesheetUrl = None, notificationFrameUrl=None ):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def get_property_editor_url(self, courseid, stylesheetUrl=None, notificationFrameUrl=None ):
         params = {}
         params['method'] = "rustici.course.properties"
         params['courseid'] = courseid
@@ -247,22 +239,20 @@ class CourseService(object):
         if notificationFrameUrl is not None:
             params['notificationframesrc'] = notificationFrameUrl
         
-        sig = sc.encode_and_sign(params)
+        sig = self.service.encode_and_sign(params)
         url = '%s?' % (self.servicehost + '/api')
         url = url + sig
         logging.info('properties link: '+url)
         return url
     
-    def GetAttributes(self,courseid, versionid=None):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
-        
+    def get_attributes(self,courseid, versionid=None):
         params = {}
         params['method'] = "rustici.course.getAttributes"
         params['courseid'] = courseid
         if versionid is not None:
             params['versionid'] = versionid
         
-        data = sc.scormcloud_call(**params)
+        data = self.service.scormcloud_call(**params)
         xmldoc = minidom.parseString(data)
         attrNodes = xmldoc.getElementsByTagName('attribute')
         atts = {}
@@ -271,9 +261,7 @@ class CourseService(object):
         
         return atts
         
-        
-    def UpdateAttributes(self, courseid, versionid, attributePairs):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def update_attributes(self, courseid, versionid, attributePairs):
         params = {}
         params['method'] = "rustici.course.updateAttributes"
         params['courseid'] = courseid
@@ -283,7 +271,7 @@ class CourseService(object):
         for (key, value) in attributePairs.iteritems():
             params[key] = value
         
-        data = sc.scormcloud_call(**params)
+        data = self.service.scormcloud_call(**params)
         xmldoc = minidom.parseString(data)
         attrNodes = xmldoc.getElementsByTagName('attribute')
         atts = {}
@@ -292,20 +280,12 @@ class CourseService(object):
 
         return atts
         
-        
-        
-# ************   Registration Service   **********************
-# ************************************************************
 
 class RegistrationService(object):
-    def __init__(self, appid, secret, servicehost):
-        self.appid = appid
-        self.secret = secret
-        self.servicehost = servicehost
+    def __init__(self, service):
+        self.service = service
         
-        
-    def CreateRegistration(self, regid,courseid,userid,fname,lname,email=None):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def create_registration(self, regid, courseid, userid, fname, lname, email=None):
         if regid is None:
             regid = str(uuid.uuid1())
         params = {}
@@ -318,7 +298,7 @@ class RegistrationService(object):
         params['learnerid'] = userid
         if email is not None:
             params['email'] = email
-        data = sc.scormcloud_call(**params)
+        data = self.service.scormcloud_call(**params)
         #logging.info('CreateRegistration result: ' + str(data))
         xmldoc = minidom.parseString(data)
         successNodes = xmldoc.getElementsByTagName('success')
@@ -326,13 +306,7 @@ class RegistrationService(object):
             raise ScormCloudError("Create Registration failed.  " + xmldoc.err.attributes['msg'] )
         return regid
         
-    
-        
-    def GetLaunchLink(self, regid, redirecturl,courseTags=None,learnerTags=None,registrationTags=None):
-        return GetLaunchUrl(self, regid, redirecturl,courseTags,learnerTags,registrationTags)
-    
-    def GetLaunchUrl(self, regid, redirecturl, cssUrl=None,debugLogPointerUrl=None,courseTags=None,learnerTags=None,registrationTags=None):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def get_launch_url(self, regid, redirecturl, cssUrl=None, debugLogPointerUrl=None, courseTags=None, learnerTags=None, registrationTags=None):
         redirecturl = redirecturl + "?regid=" + regid
         paramString = 'method|rustici.registration.launch!appid|%s!redirecturl|%s!regid|%s' % (self.appid, cgi.escape(redirecturl),regid)
         paramString += ((courseTags is not None) and ('!courseTags|%s' % (courseTags)) or '')
@@ -344,14 +318,13 @@ class RegistrationService(object):
             key,value = item.split('|')
             params[key] = value
 
-        sig = sc.encode_and_sign(params)
+        sig = self.service.encode_and_sign(params)
         url = '%s?' % (self.servicehost + '/api')
         url = url + sig
         #logging.info('launchurl:  ' + url)
         return url
     
-    def GetRegistrationList(self,regIdFilterRegex=None,courseIdFilterRegex=None):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def get_registration_list(self, regIdFilterRegex=None, courseIdFilterRegex=None):
         params = {}
         params['method'] = "rustici.registration.getRegistrationList"
         if regIdFilterRegex is not None:
@@ -359,82 +332,67 @@ class RegistrationService(object):
         if courseIdFilterRegex is not None:
             params['coursefilter'] = courseIdFilterRegex
             
-        data = sc.scormcloud_call(**params)
+        data = self.service.scormcloud_call(**params)
         regList = RegistrationData.ConvertToRegistrationDataList(data)
         return regList
         
-        
-    def GetRegistrationResult(self, regid, resultsformat,dataformat=None):
+    def get_registration_result(self, regid, resultsformat,dataformat=None):
         #course, activity, full
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
         params = {}
         params['method'] = "rustici.registration.getRegistrationResult"
         params['regid'] = regid
         params['resultsformat']= resultsformat
         if dataformat is not None:
             params['format'] = dataformat
-        data = sc.scormcloud_call(**params)
+        data = self.service.scormcloud_call(**params)
         #xmldoc = minidom.parseString(data)
         #title = xmldoc.getElementsByTagName("title")[0].childNodes[0].nodeValue
         return data
 
-    def GetLaunchHistory(self, regid):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
-        data = sc.scormcloud_call(method='rustici.registration.getLaunchHistory', regid=regid)
+    def get_launch_history(self, regid):
+        data = self.service.scormcloud_call(method='rustici.registration.getLaunchHistory', regid=regid)
         
         return data
         
-
-    def ResetRegistration(self, regid):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
-        data = sc.scormcloud_call(method='rustici.registration.resetRegistration', regid=regid)
+    def reset_registration(self, regid):
+        data = self.service.scormcloud_call(method='rustici.registration.resetRegistration', regid=regid)
         return data
         
-        
-    def ResetGlobalObjectives(self,regid,deleteLatestInstanceOnly=True):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def reset_global_objectives(self, regid, deleteLatestInstanceOnly=True):
         params = {}
         params['method'] = "rustici.registration.resetGlobalObjectives"
         params['regid'] = regid
         if deleteLatestInstanceOnly:
             params['instanceid'] = 'latest'    
         
-        data = sc.scormcloud_call(**params)
+        data = self.service.scormcloud_call(**params)
         return data
         
-    def DeleteRegistration(self, regid, deleteLatestInstanceOnly = False):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
+    def delete_registration(self, regid, deleteLatestInstanceOnly=False):
         params = {}
         params['method'] = "rustici.registration.deleteRegistration"
         params['regid'] = regid
         if deleteLatestInstanceOnly:
             params['instanceid'] = 'latest'    
         
-        data = sc.scormcloud_call(**params)
+        data = self.service.scormcloud_call(**params)
         return data
         
-# ************   Reporting Service   **********************
-# ************************************************************
 
 class ReportingService(object):
-    def __init__(self, appid, secret, servicehost):
-        self.appid = appid
-        self.secret = secret
-        self.servicehost = servicehost
+    def __init__(self, service):
+        self.service = service
     
-    def GetReportageDate(self):
+    def get_reportage_date(self):
         reportUrl = self.GetReportageServiceUrl() + 'Reportage/scormreports/api/getReportDate.php?appId=' + self.appid
         cloudsocket = urllib2.urlopen(reportUrl,None)
         reply = cloudsocket.read()
         cloudsocket.close()
         d = datetime.datetime
         return d.strptime(reply,"%Y-%m-%d %H:%M:%S")
-
-            
         
-    def GetReportageAuth(self,navPermission, isAdmin):
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
-        data = sc.scormcloud_call(method='rustici.reporting.getReportageAuth',navpermission=navPermission,admin=str(isAdmin))
+    def get_reportage_auth(self, navPermission, isAdmin):
+        data = self.service.scormcloud_call(method='rustici.reporting.getReportageAuth', navpermission=navPermission, admin=str(isAdmin))
         xmldoc = minidom.parseString(data)
         token = xmldoc.getElementsByTagName('auth')
         #logging.info('auth:  '+token[0].childNodes[0].nodeValue)
@@ -443,27 +401,23 @@ class ReportingService(object):
         else:
             return None
         
-    def GetReportageServiceUrl(self):
-        return self.servicehost.replace('EngineWebServices','')
-        #return "http://troymac/"
+    def get_reportage_service_url(self):
+        return self.service.config.serviceurl.replace('EngineWebServices','')
         
-    def GetReportUrl(self,auth,reportUrl):
-
-        sc = SCORMCloudAPI(self.appid, self.secret, self.servicehost)
-
+    def get_report_url(self, auth, reportUrl):
         params = {}
         params['method'] = 'rustici.reporting.launchReport'
         params['auth'] = auth
         params['reporturl'] = reportUrl
         
-        sig = sc.encode_and_sign(params)
+        sig = self.service.encode_and_sign(params)
         url = '%s?' % (self.servicehost + '/api')
         url = url + sig
 
         return url
          
-    def    GetWidgetUrl(self,auth,widgettype, widgetSettings):
-        reportUrl = self.GetReportageServiceUrl() + 'Reportage/scormreports/widgets/'
+    def get_widget_url(self, auth, widgettype, widgetSettings):
+        reportUrl = self.get_reportage_service_url() + 'Reportage/scormreports/widgets/'
 
         widgetUrlTypeLib = {
             'allSummary':'summary/SummaryWidget.php?srt=allLearnersAllCourses',
@@ -495,10 +449,9 @@ class ReportingService(object):
         
         return reportUrl
         
+
 class WidgetSettings(object):
-    
-    
-    def __init__(self,dateRangeSettings,tagSettings):
+    def __init__(self, dateRangeSettings, tagSettings):
         self.dateRangeSettings = dateRangeSettings
         self.tagSettings = tagSettings
         
@@ -517,7 +470,6 @@ class WidgetSettings(object):
         self.viewall = True;
         self.export = True;
         
-    
         
     def GetWidgetSettingsUrlStr(self):
         widgetUrlStr = '';
@@ -677,11 +629,11 @@ class RegistrationData(object):
 
 class ScormEngineUtilities(object):
 	@staticmethod
-	def GetCanonicalOriginString(organization, application, version):
-		nameRegex = re.compile(r'[^a-z0-9]')
-		versionRegex = re.compile(r'[^\w\.\-]')
-		organizationComponent = nameRegex.sub('', organization.lower())
-		applicationComponent = nameRegex.sub('', application.lower())
-		versionComponent = versionRegex.sub('', version.lower())
+	def get_canonical_origin_string(organization, application, version):
+		namepattern = re.compile(r'[^a-z0-9]')
+		versionpattern = re.compile(r'[^\w\.\-]')
+		org = namepattern.sub('', organization.lower())
+		app = namepattern.sub('', application.lower())
+		ver = versionpattern.sub('', version.lower())
 
-		return "%s.%s.%s" % (organizationComponent, applicationComponent, versionComponent)
+		return "%s.%s.%s" % (org, app, ver)
