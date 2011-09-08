@@ -296,10 +296,10 @@ class CourseService(object):
         request = self.service.request()
         request.parameters['courseid'] = courseid
         request.parameters['redirecturl'] = redirecturl
-        if stylesheetUrl is not None:
+        if stylesheeturl is not None:
             request.parameters['stylesheet'] = stylesheeturl
         url = request.construct_url('rustici.course.preview')
-        logging.info('preview link: '+url)
+        logging.info('preview link: '+ url)
         return url
 
     def get_metadata(self, courseid):
