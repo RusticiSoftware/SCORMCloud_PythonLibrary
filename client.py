@@ -1,15 +1,10 @@
-import cgi
-import copy
 import datetime
 import logging
-import mimetools
-import os.path
 import re
 import sys
 import urllib
 import urllib2
 import uuid
-import webbrowser
 from xml.dom import minidom
 
 # Smartly import hashlib and fall back on md5
