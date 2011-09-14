@@ -144,7 +144,7 @@ class DebugService(object):
         try:
             xmldoc = self.service.make_call('rustici.debug.ping')
             return xmldoc.documentElement.attributes['stat'].value == 'ok'
-        except Exception as ex:
+        except Exception, ex:
             return False
     
     def authping(self):
@@ -155,7 +155,7 @@ class DebugService(object):
         try:
             xmldoc = self.service.make_call('rustici.debug.authPing')
             return xmldoc.documentElement.attributes['stat'].value == 'ok'
-        except Exception as ex:
+        except Exception, ex:
             return False
 
 
@@ -230,8 +230,6 @@ class CourseService(object):
         courseid -- the unique identifier for the course
         path -- the relative path to the zip file to import
         """
-        if courseid is None:
-            courseid = str(uuid.uuid1())
         request = self.service.request()
         request.parameters['courseid'] = courseid
         request.parameters['path'] = path
@@ -403,7 +401,7 @@ class RegistrationService(object):
         if regid is None:
             regid = str(uuid.uuid1())
         request = self.service.request()
-        request.parameters['appid'] = self.appid
+        request.parameters['appid'] = self.service.config.appid
         request.parameters['courseid'] = courseid
         request.parameters['regid'] = regid
         request.parameters['fname'] = fname
@@ -437,7 +435,7 @@ class RegistrationService(object):
         """
         request = self.service.request()
         request.parameters['regid'] = regid
-        request.parameters['redirecturl'] = redirecturl + '?regid' + regid
+        request.parameters['redirecturl'] = redirecturl + '?regid=' + regid
         if cssUrl is not None:
             request.parameters['cssurl'] = cssUrl
         if courseTags is not None:
@@ -660,7 +658,7 @@ class ReportingService(object):
             'allLearners':'ViewAllDetailsWidget.php?viewall=learners',
             'allCourses':'ViewAllDetailsWidget.php?viewall=courses'}
         reportUrl += widgetUrlTypeLib[widgettype]
-        reportUrl += '&appId='+self.appid
+        reportUrl += '&appId='+self.service.config.appid
         reportUrl += widgetSettings.get_url_encoding()
         reportUrl = self.get_report_url(auth, reportUrl)
         return reportUrl
@@ -698,15 +696,15 @@ class WidgetSettings(object):
         if self.learnerId is not None:
             widgetUrlStr += '&learnerId=' + self.learnerId
         
-        widgetUrlStr += '&showTitle=' + `self.showTitle`.lower()
-        widgetUrlStr += '&standalone=' + `self.standalone`.lower()
+        widgetUrlStr += '&showTitle=' + 'self.showTitle'.lower()
+        widgetUrlStr += '&standalone=' + 'self.standalone'.lower()
         if self.iframe:
             widgetUrlStr += '&iframe=true'
-        widgetUrlStr += '&expand=' + `self.expand`.lower()
-        widgetUrlStr += '&scriptBased=' + `self.scriptBased`.lower()
+        widgetUrlStr += '&expand=' + 'self.expand'.lower()
+        widgetUrlStr += '&scriptBased=' + 'self.scriptBased'.lower()
         widgetUrlStr += '&divname=' + self.divname
-        widgetUrlStr += '&vertical=' + `self.vertical`.lower()
-        widgetUrlStr += '&embedded=' + `self.embedded`.lower()
+        widgetUrlStr += '&vertical=' + 'self.vertical'.lower()
+        widgetUrlStr += '&embedded=' + 'self.embedded'.lower()
 
         if self.dateRangeSettings is not None:
             widgetUrlStr += self.dateRangeSettings.get_url_encoding()
