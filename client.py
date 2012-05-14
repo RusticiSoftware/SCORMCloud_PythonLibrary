@@ -102,6 +102,12 @@ class ScormCloudService(object):
         Retrieves the RegistrationService.
         """
         return RegistrationService(self)
+    
+    def get_invitation_service(self):
+        """
+        Retrieves the InvitationService.
+        """
+        return InvitationService(self)
 
     def get_reporting_service(self):
         """
@@ -533,6 +539,84 @@ class RegistrationService(object):
         request.parameters['regid'] = regid
         return request.call_service('rustici.registration.deleteRegistration')
         
+
+class InvitationService(object):
+    
+    def __init__(self, service):
+        self.service = service
+
+
+    def create_invitation(self,courseid,publicInvitation='true',send='true',addresses=None,emailSubject=None,emailBody=None,creatingUserEmail=None,
+                        registrationCap=None,postbackUrl=None,authType=None,urlName=None,urlPass=None,resultsFormat=None,async=False):
+        request = self.service.request()
+        
+	request.parameters['courseid'] = courseid
+	request.parameters['send'] = send
+	request.parameters['public'] = publicInvitation
+
+	if addresses is not None:
+	    request.parameters['addresses'] = addresses
+	if emailSubject is not None:
+	    request.parameters['emailSubject'] = emailSubject
+	if emailBody is not None:
+	    request.parameters['emailBody'] = emailBody
+	if creatingUserEmail is not None:
+	    request.parameters['creatingUserEmail'] = creatingUserEmail
+	if registrationCap is not None:
+	    request.parameters['registrationCap'] = registrationCap
+	if postbackUrl is not None:
+	    request.parameters['postbackUrl'] = postbackUrl
+	if authType is not None:
+	    request.parameters['authType'] = authType
+	if urlName is not None:
+	    request.parameters['urlName'] = urlName
+	if urlPass is not None:
+	    request.parameters['urlPass'] = urlPass
+	if resultsFormat is not None:
+	    request.parameters['resultsFormat'] = resultsFormat
+
+        if async:
+            data = request.call_service('rustici.invitation.createInvitationAsync')
+        else:
+            data = request.call_service('rustici.invitation.createInvitation')
+        
+        return data
+
+
+
+    def get_invitation_list(self, filter=None,coursefilter=None):
+        request = self.service.request()
+        if filter is not None:
+            request.parameters['filter'] = filter
+        if coursefilter is not None:
+            request.parameters['coursefilter'] = coursefilter
+        data = request.call_service('rustici.invitation.getInvitationList')
+        return data
+    
+    def get_invitation_status(self, invitationId):
+	request = self.service.request()
+	request.parameters['invitationId'] = invitationId
+	data = request.call_service('rustici.invitation.getInvitationStatus')
+	return data
+
+    def get_invitation_info(self, invitationId,detail=None):
+        request = self.service.request()
+	request.parameters['invitationId'] = invitationId
+	if detail is not None:
+	    request.parameters['detail'] = detail
+	data = request.call_service('rustici.invitation.getInvitationInfo')
+	return data
+
+    def change_status(self, invitationId,enable,open=None):
+	request = self.service.request()
+	request.parameters['invitationId'] = invitationId
+	request.parameters['enable'] = enable
+	if open is not None:
+	    request.parameters['open'] = open
+	data = request.call_service('rustici.invitation.changeStatus')
+	return data
+
+
 
 class ReportingService(object):
     """
