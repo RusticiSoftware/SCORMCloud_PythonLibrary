@@ -392,7 +392,7 @@ class RegistrationService(object):
         self.service = service
         
     def create_registration(self, regid, courseid, userid, fname, lname, 
-                            email=None):
+                            email=None, learnerTags=None, courseTags=None, registrationTags=None):
         """
         Creates a new registration (an instance of a user taking a course).
 
@@ -415,6 +415,12 @@ class RegistrationService(object):
         request.parameters['learnerid'] = userid
         if email is not None:
             request.parameters['email'] = email
+        if learnerTags is not None:
+            request.parameters['learnerTags'] = learnerTags
+        if courseTags is not None:
+            request.parameters['courseTags'] = courseTags
+        if registrationTags is not None:
+            request.parameters['registrationTags'] = registrationTags
         xmldoc = request.call_service('rustici.registration.createRegistration')
         successNodes = xmldoc.getElementsByTagName('success')
         if successNodes.length == 0:
@@ -1044,7 +1050,7 @@ class ServiceRequest(object):
         signing = ''
         values = list()
         secret = self.service.config.secret
-        for key in sorted(dictionary.keys()):
+        for key in sorted(dictionary.keys(), key=str.lower):
             signing += key + dictionary[key]
             values.append(key + '=' + urllib.quote_plus(dictionary[key]))
         values.append('sig=' + md5(secret + signing).hexdigest())
