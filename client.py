@@ -1,7 +1,6 @@
 import datetime
 import logging
 import re
-import sys
 import urllib
 import urllib2
 import uuid
@@ -150,7 +149,7 @@ class DebugService(object):
         try:
             xmldoc = self.service.make_call('rustici.debug.ping')
             return xmldoc.documentElement.attributes['stat'].value == 'ok'
-        except Exception, ex:
+        except:
             return False
     
     def authping(self):
@@ -161,7 +160,7 @@ class DebugService(object):
         try:
             xmldoc = self.service.make_call('rustici.debug.authPing')
             return xmldoc.documentElement.attributes['stat'].value == 'ok'
-        except Exception, ex:
+        except:
             return False
 
 
