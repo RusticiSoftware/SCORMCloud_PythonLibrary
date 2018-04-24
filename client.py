@@ -436,8 +436,10 @@ class CourseService(object):
         files = { 'file': file_handle }
 
         url = request.construct_url('rustici.course.importCourseAsync')
-        res = requests.post(url, files=files, verify=False)
-        return res.text
+        res = requests.post(url, files=files)
+
+        xmldoc = request.get_xml(res.content)
+        return xmldoc.getElementsByTagName('id')[0].childNodes[0].nodeValue
 
     def get_async_import_result(self, token):
         request = self.service.request()
@@ -445,7 +447,9 @@ class CourseService(object):
 
         url = request.construct_url('rustici.course.getAsyncImportResult')
         res = requests.post(url)
-        return res.text
+
+        xmldoc = request.get_xml(res.content)
+        return AsyncImportResult.result_from_xmldoc(xmldoc)
 
     def import_uploaded_course(self, courseid, path):
         """
@@ -1150,6 +1154,29 @@ class ScormCloudError(Exception):
     def __str__(self):
         return repr(self.msg)
 
+class AsyncImportResult(object):
+    def __init__(self, status, message, progress, import_results):
+        self.status = status
+        self.message = message
+        self.progress = progress
+        self.import_results = import_results
+
+    def __repr__(self):
+        return ("AsyncImportResult(status='{}', message='{}', progress='{}', " +
+                "import_results={})").format(self.status, self.message,
+                        self.progress, self.import_results)
+
+    @classmethod
+    def result_from_xmldoc(cls, xmldoc):
+        status = xmldoc.getElementsByTagName('status')[0].childNodes[0].nodeValue
+        message = xmldoc.getElementsByTagName('message')[0].childNodes[0].nodeValue
+        progress = xmldoc.getElementsByTagName('progress')[0].childNodes[0].nodeValue
+
+        import_results = ImportResult.list_from_result(xmldoc)
+
+        return cls(status, message, progress, import_results)
+
+
 class ImportResult(object):
     wasSuccessful = False
     title = ""
@@ -1168,6 +1195,11 @@ class ImportResult(object):
             xmlpw = importResultElement.getElementsByTagName("warning")
             for pw in xmlpw:
                 self.parserWarnings.append(pw.childNodes[0].nodeValue)
+
+    def __repr__(self):
+        return ("ImportResult(wasSuccessful={}, title='{}', message='{}', " +
+                "parserWarnings={})").format(self.wasSuccessful, self.title,
+                        self.message, self.parserWarnings)
 
     @classmethod
     def list_from_result(cls, xmldoc):
