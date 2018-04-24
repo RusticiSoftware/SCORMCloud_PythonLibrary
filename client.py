@@ -2,40 +2,27 @@ import datetime
 import logging
 import re
 import sys
-import urllib
-import urllib2
+import urllib.request, urllib.parse, urllib.error
+import ssl
 import uuid
+import requests
 from xml.dom import minidom
+import lxml.etree as etree
+import shutil
+import logging
 
 # Smartly import hashlib and fall back on md5
-try: from hashlib import md5
-except ImportError: from md5 import md5
-
-
-def make_utf8(dictionary):
-    """
-    Encodes all Unicode strings in the dictionary to UTF-8. Converts
-    all other objects to regular strings.
-    
-    Returns a copy of the dictionary, doesn't touch the original.
-    """
-    
-    result = {}
-    for (key, value) in dictionary.iteritems():
-        if isinstance(value, unicode):
-            value = value.encode('utf-8')
-        else:
-            value = str(value)
-        result[key] = value
-    return result
-
+try:
+    from hashlib import md5
+except ImportError:
+    from md5 import md5
 
 class Configuration(object):
     """
     Stores the configuration elements required by the API.
     """
 
-    def __init__(self, appid, secret, 
+    def __init__(self, appid, secret,
                  serviceurl, origin='rusticisoftware.pythonlibrary.2.0.0'):
         self.appid = appid
         self.secret = secret
@@ -45,7 +32,7 @@ class Configuration(object):
     def __repr__(self):
         return 'Configuration for AppID %s from origin %s' % (
                self.appid, self.origin)
-        
+
 class ScormCloudService(object):
     """
     Primary cloud service object that provides access to the more specific
@@ -55,7 +42,7 @@ class ScormCloudService(object):
     def __init__(self, configuration):
         self.config = configuration
         self.__handler_cache = {}
-        
+
     @classmethod
     def withconfig(cls, config):
         """
@@ -97,12 +84,18 @@ class ScormCloudService(object):
         """
         return DebugService(self)
 
+    def get_dispatch_service(self):
+        """
+        Retrieves the DebugService.
+        """
+        return DispatchService(self)
+
     def get_registration_service(self):
         """
         Retrieves the RegistrationService.
         """
         return RegistrationService(self)
-    
+
     def get_invitation_service(self):
         """
         Retrieves the InvitationService.
@@ -120,7 +113,7 @@ class ScormCloudService(object):
         Retrieves the UploadService.
         """
         return UploadService(self)
-    
+
     def request(self):
         """
         Convenience method to create a new ServiceRequest.
@@ -133,6 +126,15 @@ class ScormCloudService(object):
         parameters).
         """
         return self.request().call_service(method)
+
+    def get_lrsaccount_service(self):
+        return LrsAccountService(self)
+
+    def get_application_service(self):
+        return ApplicationService(self)
+
+    def get_post_back_service(self):
+        return PostbackService(self)
 
 class DebugService(object):
     """
@@ -150,9 +152,9 @@ class DebugService(object):
         try:
             xmldoc = self.service.make_call('rustici.debug.ping')
             return xmldoc.documentElement.attributes['stat'].value == 'ok'
-        except Exception, ex:
+        except Exception:
             return False
-    
+
     def authping(self):
         """
         An authenticated ping that checks the connection to the SCORM Cloud
@@ -161,9 +163,184 @@ class DebugService(object):
         try:
             xmldoc = self.service.make_call('rustici.debug.authPing')
             return xmldoc.documentElement.attributes['stat'].value == 'ok'
-        except Exception, ex:
+        except Exception:
             return False
 
+class DispatchService(object):
+
+    def __init__(self, service):
+        self.service = service
+
+    def get_dispatch_info(self, dispatchid):
+        request = self.service.request()
+        request.parameters['dispatchid'] = dispatchid
+
+        result = request.call_service('rustici.dispatch.getDispatchInfo')
+
+        return result
+
+    def get_destination_info(self, destinationid):
+        request = self.service.request()
+        request.parameters['destinationid'] = dispatchid
+
+        result = request.call_service('rustici.dispatch.getDestinationInfo')
+
+        return result
+
+    def download_dispatches(self, dispatchid=None, tags=None, destinationid=None, courseid=None):
+        request = self.service.request()
+        if dispatchid is not None:
+            request.parameters['dispatchid'] = dispatchid
+        if destinationid is not None:
+            request.parameters['destinationid'] = destinationid
+        if tags is not None:
+            request.parameters['tags'] = tags
+        if courseid is not None:
+            request.parameters['courseid'] = courseid
+
+        url = request.construct_url('rustici.dispatch.downloadDispatches')
+        r = request.send_post(url, None)
+
+        with open("dispatch.zip", "w") as f:
+            f.write(r)
+
+        return "success"
+
+class ApplicationService(object):
+    """
+    Used for testing Nathan's Application web service changes
+    """
+
+    def __init__(self, service):
+        self.service = service
+
+    def create_application(self, name):
+        request = self.service.request()
+        request.parameters['appid'] = self.service.config.appid
+        request.parameters['name'] = name
+        try:
+            result = request.call_service('rustici.application.createApplication')
+            result = ApplicationCallbackData.list_from_result(result)
+        except urllib.error.HTTPError:
+            logging.exception('failed to create application')
+
+        return result
+
+    def get_app_list(self):
+        request = self.service.request()
+        request.parameters['appid'] = self.service.config.appid
+        result = "failed"
+        try:
+            result = request.call_service('rustici.application.getAppList')
+            result = ApplicationCallbackData.list_from_list(result)
+        except urllib.error.HTTPError:
+            logging.exception('failed to get list')
+
+        return result
+
+    def get_app_info(self, childAppId):
+        request = self.service.request()
+        request.parameters['appid'] = self.service.config.appid
+        request.parameters['childappid'] = childAppId
+        result = "failed"
+        try:
+            result = request.call_service('rustici.application.getAppInfo')
+            result = ApplicationCallbackData.list_from_result(result)
+        except urllib.error.HTTPError:
+            logging.exception('failed to get info')
+
+        return result
+
+    def update_app(self, childAppId, appName):
+        request = self.service.request()
+        request.parameters['appid'] = self.service.config.appid
+        request.parameters['childappid'] = childAppId
+        if(appName != ''):
+            request.parameters['name'] = appName
+        result = "failed"
+        try:
+            result = request.call_service('rustici.application.updateApplication')
+            result = ApplicationCallbackData.list_from_result(result)
+        except urllib.error.HTTPError:
+            logging.exception('failed to update')
+
+        return result
+
+class LrsAccountService(object):
+    """
+    Used for testing LRSAccountService stuff
+    """
+
+    def __init__(self, service):
+        self.service = service
+
+    def get_lrs_callback_url(self):
+        request = self.service.request()
+        request.parameters['appid'] = self.service.config.appid
+        lrs = "Service call failed"
+        try:
+            result = request.call_service('rustici.lrsaccount.getAppLrsAuthCallbackUrl')
+            lrs = LrsCallbackData.list_from_result(result)
+        except urllib.error.HTTPError:
+            logging.exception('failed')
+
+        return lrs
+
+    def get_reset_lrs_callback_url(self):
+        request = self.service.request()
+        request.parameters['appid'] = self.service.config.appid
+        success = False
+        try:
+            result = request.call_service('rustici.lrsaccount.resetAppLrsAuthCallbackUrl')
+            success = LrsCallbackData.get_success(result)
+        except urllib.error.HTTPError:
+            logging.exception('failed')
+
+        return success
+
+    def set_lrs_callback_url(self, lrsUrl):
+        request = self.service.request()
+        request.parameters['appid'] = self.service.config.appid
+        request.parameters['lrsAuthCallbackUrl'] = lrsUrl
+        success = False
+        try:
+            result = request.call_service('rustici.lrsaccount.setAppLrsAuthCallbackUrl');
+            success = LrsCallbackData.get_success(result)
+        except urllib.error.HTTPError:
+            logging.exception('failed')
+
+        return success
+
+    def edit_activity_provider(self, activityProviderId, appIds, permissionsLevel):
+        request = self.service.request()
+        request.parameters['appid'] = self.service.config.appid
+        request.parameters['accountkey'] = activityProviderId
+        if appIds != "":
+            request.parameters['allowedendpoints'] = appIds
+        if permissionsLevel != "":
+            request.parameters['permissionslevel'] = permissionsLevel
+        success = False
+        try:
+            result = request.call_service('rustici.lrsaccount.editActivityProvider')
+            success = ActivityProviderCallbackData.activity_provider_from_result(result)
+        except urllib.error.HTTPError:
+            logging.exception('failed')
+
+        return success
+
+    def list_activity_providers(self):
+        request = self.service.request()
+        request.parameters['appid'] = self.service.config.appid
+        success = False
+        try:
+            result = request.call_service('rustici.lrsaccount.listActivityProviders')
+            success = ActivityProviderCallbackData.activity_providers_from_result(result)
+        except urllib.error.HTTPError:
+            logging.exception('failed')
+        except KeyError:
+            logging.exception('key error fail')
+
+        return success
 
 class UploadService(object):
     """
@@ -172,7 +349,7 @@ class UploadService(object):
 
     def __init__(self, service):
         self.service = service
-        
+
     def get_upload_token(self):
         """
         Retrieves an upload token which must be used to successfully upload a
@@ -203,10 +380,10 @@ class UploadService(object):
             request = self.service.request()
             request.parameters['tokenid'] = token.tokenid
             request.parameters['redirecturl'] = callbackurl
-            return request.construct_url('rustici.upload.uploadFile') 
+            return request.construct_url('rustici.upload.uploadFile')
         else:
             return None
-        
+
     def delete_file(self, location):
         """
         Deletes the specified file.
@@ -215,8 +392,13 @@ class UploadService(object):
         request = self.service.request()
         request.parameters['file'] = locParts[len(locParts) - 1]
         return request.call_service('rustici.upload.deleteFiles')
-        
-    
+
+    def get_upload_progress(self, token):
+        request = self.service.request()
+        request.parameters['token'] = token
+        return request.call_service('rustici.upload.getUploadProgress')
+
+
 class CourseService(object):
     """
     Service that provides methods to manage and interact with courses on the
@@ -226,7 +408,45 @@ class CourseService(object):
 
     def __init__(self, service):
         self.service = service
-        
+
+    def exists(self, courseid):
+        request = self.service.request()
+        request.parameters['courseid'] = courseid
+
+        result = request.call_service('rustici.course.exists')
+
+        return result
+
+    def import_course(self, courseid, file_handle):
+        request = self.service.request()
+        request.parameters['courseid'] = courseid
+
+        files = { 'file': file_handle }
+
+        url = request.construct_url('rustici.course.importCourse')
+        res = requests.post(url, files=files)
+
+        xmldoc = request.get_xml(res.content)
+        return ImportResult.list_from_result(xmldoc)
+
+    def import_course_async(self, courseid, file_handle):
+        request = self.service.request()
+        request.parameters['courseid'] = courseid
+
+        files = { 'file': file_handle }
+
+        url = request.construct_url('rustici.course.importCourseAsync')
+        res = requests.post(url, files=files, verify=False)
+        return res.text
+
+    def get_async_import_result(self, token):
+        request = self.service.request()
+        request.parameters['token'] = token
+
+        url = request.construct_url('rustici.course.getAsyncImportResult')
+        res = requests.post(url)
+        return res.text
+
     def import_uploaded_course(self, courseid, path):
         """
         Imports a SCORM PIF (zip file) from an existing zip file on the SCORM
@@ -242,7 +462,7 @@ class CourseService(object):
         result = request.call_service('rustici.course.importCourse')
         ir = ImportResult.list_from_result(result)
         return ir
-    
+
     def delete_course(self, courseid):
         """
         Deletes the specified course.
@@ -268,8 +488,8 @@ class CourseService(object):
         request.parameters['courseid'] = courseid
         if (path is not None):
             request.parameters['path'] = path
-        return request.call_service('rustici.course.getAssets') 
-        
+        return request.call_service('rustici.course.getAssets')
+
     def get_course_list(self, courseIdFilterRegex=None):
         """
         Retrieves a list of CourseData elements for all courses owned by the
@@ -284,9 +504,9 @@ class CourseService(object):
             request.parameters['filter'] = courseIdFilterRegex
         result = request.call_service('rustici.course.getCourseList')
         courses = CourseData.list_from_result(result)
-        return courses 
+        return courses
 
-    def get_preview_url(self, courseid, redirecturl, stylesheeturl=None):
+    def get_preview_url(self, courseid, redirecturl, versionid=None, stylesheeturl=None):
         """
         Gets the URL that can be opened to preview the course without the need
         for a registration.
@@ -302,6 +522,8 @@ class CourseService(object):
         request.parameters['redirecturl'] = redirecturl
         if stylesheeturl is not None:
             request.parameters['stylesheet'] = stylesheeturl
+        if versionid is not None:
+            request.parameters['versionid'] = str(versionid)
         url = request.construct_url('rustici.course.preview')
         logging.info('preview link: '+ url)
         return url
@@ -317,7 +539,7 @@ class CourseService(object):
         request.parameters['courseid'] = courseid
         return request.call_service('rustici.course.getMetadata')
 
-    def get_property_editor_url(self, courseid, stylesheetUrl=None, 
+    def get_property_editor_url(self, courseid, stylesheetUrl=None,
                                 notificationFrameUrl=None):
         """
         Gets the URL to view/edit the package properties for the course.
@@ -327,8 +549,8 @@ class CourseService(object):
         courseid -- the unique identifier for the course
         stylesheeturl -- URL to a custom editor stylesheet
         notificationFrameUrl -- Tells the property editor to render a sub-iframe
-            with this URL as the source. This can be used to simulate an 
-            "onload" by using a notificationFrameUrl that is on the same domain 
+            with this URL as the source. This can be used to simulate an
+            "onload" by using a notificationFrameUrl that is on the same domain
             as the host system and calling parent.parent.method()
         """
         request = self.service.request()
@@ -337,14 +559,14 @@ class CourseService(object):
             request.parameters['stylesheet'] = stylesheetUrl
         if notificationFrameUrl is not None:
             request.parameters['notificationframesrc'] = notificationFrameUrl
-        
+
         url = request.construct_url('rustici.course.properties')
         logging.info('properties link: '+url)
         return url
-    
-    def get_attributes(self, courseid): 
+
+    def get_attributes(self, courseid):
         """
-        Retrieves the list of associated attributes for the course. 
+        Retrieves the list of associated attributes for the course.
 
         Arguments:
         courseid -- the unique identifier for the course
@@ -359,7 +581,7 @@ class CourseService(object):
         for an in attrNodes:
             atts[an.attributes['name'].value] = an.attributes['value'].value
         return atts
-        
+
     def update_attributes(self, courseid, attributePairs):
         """
         Updates the specified attributes for the course.
@@ -370,7 +592,7 @@ class CourseService(object):
         """
         request = self.service.request()
         request.parameters['courseid'] = courseid
-        for (key, value) in attributePairs.iteritems():
+        for (key, value) in attributePairs.items():
             request.parameters[key] = value
         xmldoc = request.call_service('rustici.course.updateAttributes')
 
@@ -379,7 +601,22 @@ class CourseService(object):
         for an in attrNodes:
             atts[an.attributes['name'].value] = an.attributes['value'].value
         return atts
+
+class PostbackService(object):
+    def __init__(self, service):
+        self.service = service
+
+    def get_postback_info(self, appid, regid):
+        request = self.service.request()
+        request.parameters['appid'] = appid
+        request.parameters['regid'] = regid
+
+        xmldoc = request.call_service('rustici.registration.getPostbackInfo')
+        pbd = PostbackData(xmldoc)
+
+        logging.debug('postback registration id: %s', pbd.registrationId)
         
+        return pbd
 
 class RegistrationService(object):
     """
@@ -390,8 +627,26 @@ class RegistrationService(object):
 
     def __init__(self, service):
         self.service = service
-        
-    def create_registration(self, regid, courseid, userid, fname, lname, 
+
+    def test_registration_post(self,authtype, postbackurl,urlname, passw):
+        request = self.service.request()
+        request.parameters['authtype'] = authtype
+        request.parameters['postbackurl'] = postbackurl
+        request.parameters['urlname'] = urlname
+        request.parameters['urlpass'] = passw
+        return request.call_service('rustici.registration.testRegistrationPostUrl')
+
+    def update_postback_info(self, regid, url, authtype='', user='', password='', resultsformat='course'):
+        request = self.service.request()
+        request.parameters['regid'] = regid
+        request.parameters['url'] = url
+        request.parameters['authtype'] = authtype
+        request.parameters['name'] = user
+        request.parameters['password'] = password
+        request.parameters['resultsformat'] = resultsformat
+        return request.call_service('rustici.registration.updatePostbackInfo')
+
+    def create_registration(self, regid, courseid, userid, fname, lname, postbackUrl=None,
                             email=None, learnerTags=None, courseTags=None, registrationTags=None):
         """
         Creates a new registration (an instance of a user taking a course).
@@ -410,8 +665,10 @@ class RegistrationService(object):
         request.parameters['appid'] = self.service.config.appid
         request.parameters['courseid'] = courseid
         request.parameters['regid'] = regid
-        request.parameters['fname'] = fname
-        request.parameters['lname'] = lname
+        if fname is not None:
+            request.parameters['fname'] = fname
+        if lname is not None:
+            request.parameters['lname'] = lname
         request.parameters['learnerid'] = userid
         if email is not None:
             request.parameters['email'] = email
@@ -421,18 +678,20 @@ class RegistrationService(object):
             request.parameters['courseTags'] = courseTags
         if registrationTags is not None:
             request.parameters['registrationTags'] = registrationTags
+        if postbackUrl is not None:
+            request.parameters['postbackurl'] = postbackUrl
         xmldoc = request.call_service('rustici.registration.createRegistration')
         successNodes = xmldoc.getElementsByTagName('success')
         if successNodes.length == 0:
-            raise ScormCloudError("Create Registration failed.  " + 
+            raise ScormCloudError("Create Registration failed.  " +
                                   xmldoc.err.attributes['msg'])
         return regid
-        
-    def get_launch_url(self, regid, redirecturl, cssUrl=None, courseTags=None, 
+
+    def get_launch_url(self, regid, redirecturl, cssUrl=None, courseTags=None,
                        learnerTags=None, registrationTags=None):
         """
         Gets the URL to directly launch the course in a web browser.
-        
+
         Arguments:
         regid -- the unique identifier for the registration
         redirecturl -- the URL to which the SCORM player will redirect upon
@@ -458,15 +717,15 @@ class RegistrationService(object):
             request.parameters['registrationTags'] = registrationTags
         url = request.construct_url('rustici.registration.launch')
         return url
-    
-    def get_registration_list(self, regIdFilterRegex=None, 
+
+    def get_registration_list(self, regIdFilterRegex=None,
                               courseIdFilterRegex=None):
         """
         Retrieves a list of registration associated with the configured AppID.
         Can optionally be filtered by registration or course ID.
 
         Arguments:
-        regIdFilterRegex -- (optional) the regular expression used to filter the 
+        regIdFilterRegex -- (optional) the regular expression used to filter the
             list by registration ID
         courseIdFilterRegex -- (optional) the regular expression used to filter
             the list by course ID
@@ -476,12 +735,12 @@ class RegistrationService(object):
             request.parameters['filter'] = regIdFilterRegex
         if courseIdFilterRegex is not None:
             request.parameters['coursefilter'] = courseIdFilterRegex
-            
+
         result = request.call_service(
-                 'rustici.registration.getRegistrationList')
+            'rustici.registration.getRegistrationList')
         regs = RegistrationData.list_from_result(result)
-        return regs 
-        
+        return regs
+
     def get_registration_result(self, regid, resultsformat):
         """
         Gets information about the specified registration.
@@ -495,7 +754,21 @@ class RegistrationService(object):
         request.parameters['regid'] = regid
         request.parameters['resultsformat'] = resultsformat
         return request.call_service(
-               'rustici.registration.getRegistrationResult')
+            'rustici.registration.getRegistrationResult')
+
+    def get_registration_detail(self, regid):
+        """
+        This method will return some detail for the registration specified with
+        the given appid and registrationid, including information regarding
+        registration instances.
+
+        Arguments:
+        regid -- the unique identifier for the registration
+        """
+        request = self.service.request()
+        request.parameters['regid'] = regid
+        return request.call_service(
+            'rustici.registration.getRegistrationDetail')
 
     def get_launch_history(self, regid):
         """
@@ -509,7 +782,12 @@ class RegistrationService(object):
         request = self.service.request()
         request.parameters['regid'] = regid
         return request.call_service('rustici.registration.getLaunchHistory')
-        
+
+    def get_launch_info(self, launchid):
+        request = self.service.request()
+        request.parameters['launchid'] = launchid
+        return request.call_service('rustici.registration.getLaunchInfo')
+
     def reset_registration(self, regid):
         """
         Resets all status data for the specified registration, essentially
@@ -521,7 +799,18 @@ class RegistrationService(object):
         request = self.service.request()
         request.parameters['regid'] = regid
         return request.call_service('rustici.registration.resetRegistration')
-        
+
+    def exists(self, regid):
+        """
+        Checks if a registration exists
+
+        Arguments:
+        regid -- the unique identifier for the registration
+        """
+        request = self.service.request()
+        request.parameters['regid'] = regid
+        return request.call_service('rustici.registration.exists')
+
     def reset_global_objectives(self, regid):
         """
         Clears global objective data for the specified registration.
@@ -532,8 +821,8 @@ class RegistrationService(object):
         request = self.service.request()
         request.parameters['regid'] = regid
         return request.call_service(
-               'rustici.registration.resetGlobalObjectives')
-        
+            'rustici.registration.resetGlobalObjectives')
+
     def delete_registration(self, regid):
         """
         Deletes the specified registration.
@@ -544,51 +833,51 @@ class RegistrationService(object):
         request = self.service.request()
         request.parameters['regid'] = regid
         return request.call_service('rustici.registration.deleteRegistration')
-        
+
 
 class InvitationService(object):
-    
+
     def __init__(self, service):
         self.service = service
 
 
-    def create_invitation(self,courseid,publicInvitation='true',send='true',addresses=None,emailSubject=None,emailBody=None,creatingUserEmail=None,
-                        registrationCap=None,postbackUrl=None,authType=None,urlName=None,urlPass=None,resultsFormat=None,async=False):
+    def create_invitation(self,courseid,tags=None,publicInvitation='true',send='true',addresses=None,emailSubject=None,emailBody=None,creatingUserEmail=None,
+                          registrationCap=None,postbackUrl=None,authType=None,urlName=None,urlPass=None,resultsFormat=None,async=False):
         request = self.service.request()
-        
-	request.parameters['courseid'] = courseid
-	request.parameters['send'] = send
-	request.parameters['public'] = publicInvitation
 
-	if addresses is not None:
-	    request.parameters['addresses'] = addresses
-	if emailSubject is not None:
-	    request.parameters['emailSubject'] = emailSubject
-	if emailBody is not None:
-	    request.parameters['emailBody'] = emailBody
-	if creatingUserEmail is not None:
-	    request.parameters['creatingUserEmail'] = creatingUserEmail
-	if registrationCap is not None:
-	    request.parameters['registrationCap'] = registrationCap
-	if postbackUrl is not None:
-	    request.parameters['postbackUrl'] = postbackUrl
-	if authType is not None:
-	    request.parameters['authType'] = authType
-	if urlName is not None:
-	    request.parameters['urlName'] = urlName
-	if urlPass is not None:
-	    request.parameters['urlPass'] = urlPass
-	if resultsFormat is not None:
-	    request.parameters['resultsFormat'] = resultsFormat
+        request.parameters['courseid'] = courseid
+        request.parameters['send'] = send
+        request.parameters['public'] = publicInvitation
+
+        if addresses is not None:
+            request.parameters['addresses'] = addresses
+        if emailSubject is not None:
+            request.parameters['emailSubject'] = emailSubject
+        if emailBody is not None:
+            request.parameters['emailBody'] = emailBody
+        if creatingUserEmail is not None:
+            request.parameters['creatingUserEmail'] = creatingUserEmail
+        if registrationCap is not None:
+            request.parameters['registrationCap'] = registrationCap
+        if postbackUrl is not None:
+            request.parameters['postbackUrl'] = postbackUrl
+        if authType is not None:
+            request.parameters['authType'] = authType
+        if urlName is not None:
+            request.parameters['urlName'] = urlName
+        if urlPass is not None:
+            request.parameters['urlPass'] = urlPass
+        if resultsFormat is not None:
+            request.parameters['resultsFormat'] = resultsFormat
+        if tags is not None:
+            request.parameters['tags'] = tags
 
         if async:
             data = request.call_service('rustici.invitation.createInvitationAsync')
         else:
             data = request.call_service('rustici.invitation.createInvitation')
-        
+
         return data
-
-
 
     def get_invitation_list(self, filter=None,coursefilter=None):
         request = self.service.request()
@@ -598,29 +887,29 @@ class InvitationService(object):
             request.parameters['coursefilter'] = coursefilter
         data = request.call_service('rustici.invitation.getInvitationList')
         return data
-    
+
     def get_invitation_status(self, invitationId):
-	request = self.service.request()
-	request.parameters['invitationId'] = invitationId
-	data = request.call_service('rustici.invitation.getInvitationStatus')
-	return data
+        request = self.service.request()
+        request.parameters['invitationId'] = invitationId
+        data = request.call_service('rustici.invitation.getInvitationStatus')
+        return data
 
     def get_invitation_info(self, invitationId,detail=None):
         request = self.service.request()
-	request.parameters['invitationId'] = invitationId
-	if detail is not None:
-	    request.parameters['detail'] = detail
-	data = request.call_service('rustici.invitation.getInvitationInfo')
-	return data
+        request.parameters['invitationId'] = invitationId
+        if detail is not None:
+            request.parameters['detail'] = detail
+        data = request.call_service('rustici.invitation.getInvitationInfo')
+        return data
 
     def change_status(self, invitationId,enable,open=None):
-	request = self.service.request()
-	request.parameters['invitationId'] = invitationId
-	request.parameters['enable'] = enable
-	if open is not None:
-	    request.parameters['open'] = open
-	data = request.call_service('rustici.invitation.changeStatus')
-	return data
+        request = self.service.request()
+        request.parameters['invitationId'] = invitationId
+        request.parameters['enable'] = enable
+        if open is not None:
+            request.parameters['open'] = open
+        data = request.call_service('rustici.invitation.changeStatus')
+        return data
 
 
 
@@ -631,20 +920,23 @@ class ReportingService(object):
 
     def __init__(self, service):
         self.service = service
-    
+
     def get_reportage_date(self):
         """
         Gets the date/time, according to Reportage.
         """
-        reportUrl = (self._get_reportage_service_url() + 
-                    'Reportage/scormreports/api/getReportDate.php?appId=' + 
-                    self.service.config.appid)
-        cloudsocket = urllib2.urlopen(reportUrl,None)
+        reportUrl = (self._get_reportage_service_url() +
+                     'Reportage/scormreports/api/getReportDate.php?appId=' +
+                     self.service.config.appid)
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        cloudsocket = urllib.request.urlopen(reportUrl, None, 2000, context=ctx)
         reply = cloudsocket.read()
         cloudsocket.close()
         d = datetime.datetime
         return d.strptime(reply,"%Y-%m-%d %H:%M:%S")
-        
+
     def get_reportage_auth(self, navperm, allowadmin):
         """
         Authenticates against the Reportage application, returning a session
@@ -668,7 +960,7 @@ class ReportingService(object):
             return token[0].childNodes[0].nodeValue
         else:
             return None
-        
+
     def _get_reportage_service_url(self):
         """
         Returns the base Reportage URL.
@@ -678,7 +970,7 @@ class ReportingService(object):
     def _get_base_reportage_url(self):
         return (self._get_reportage_service_url() + 'Reportage/reportage.php' +
                '?appId=' + self.service.config.appid)
-        
+
     def get_report_url(self, auth, reportUrl):
         """
         Returns an authenticated URL that can launch a Reportage session at
@@ -693,8 +985,8 @@ class ReportingService(object):
         request.parameters['auth'] = auth
         request.parameters['reporturl'] = reportUrl
         url = request.construct_url('rustici.reporting.launchReport')
-        return url 
-    
+        return url
+
     def get_reportage_url(self, auth):
         """
         Returns the authenticated URL to the main Reportage entry point.
@@ -705,11 +997,11 @@ class ReportingService(object):
         """
         reporturl = self._get_base_reportage_url()
         return self.get_report_url(auth, reporturl)
-    
+
     def get_course_reportage_url(self, auth, courseid):
         reporturl = self._get_base_reportage_url() + '&courseid=' + courseid
         return self.get_report_url(auth, reporturl)
-         
+
     def get_widget_url(self, auth, widgettype, widgetSettings):
         """
         Gets the URL to a specific Reportage widget, using the provided
@@ -721,8 +1013,8 @@ class ReportingService(object):
         widgettype -- the widget type desired (for example, learnerSummary)
         widgetSettings -- the WidgetSettings object for the widget type
         """
-        reportUrl = (self._get_reportage_service_url() + 
-                    'Reportage/scormreports/widgets/')
+        reportUrl = (self._get_reportage_service_url() +
+                     'Reportage/scormreports/widgets/')
         widgetUrlTypeLib = {
             'allSummary':'summary/SummaryWidget.php?srt=allLearnersAllCourses',
             'courseSummary':'summary/SummaryWidget.php?srt=singleCourse',
@@ -737,7 +1029,6 @@ class ReportingService(object):
             'learnerInteractions':'DetailsWidget.php?drt=learnerInteractions',
             'learnerActivities':'DetailsWidget.php?drt=learnerActivities',
             'courseRegistration':'DetailsWidget.php?drt=courseRegistration',
-            'learnerRegistration':'DetailsWidget.php?drt=learnerRegistration',
             'learnerCourseActivities':'DetailsWidget.php?drt='
                                       'learnerCourseActivities',
             'learnerTranscript':'DetailsWidget.php?drt=learnerTranscript',
@@ -752,16 +1043,16 @@ class ReportingService(object):
         reportUrl += widgetSettings.get_url_encoding()
         reportUrl = self.get_report_url(auth, reportUrl)
         return reportUrl
-        
+
 
 class WidgetSettings(object):
     def __init__(self, dateRangeSettings, tagSettings):
         self.dateRangeSettings = dateRangeSettings
         self.tagSettings = tagSettings
-        
+
         self.courseId = None
         self.learnerId = None
-        
+
         self.showTitle = True;
         self.vertical = False;
         self.public = True;
@@ -773,11 +1064,11 @@ class WidgetSettings(object):
         self.embedded = True;
         self.viewall = True;
         self.export = True;
-        
-        
+
+
     def get_url_encoding(self):
         """
-        Returns the widget settings as encoded URL parameters to add to a 
+        Returns the widget settings as encoded URL parameters to add to a
         Reportage widget URL.
         """
         widgetUrlStr = '';
@@ -785,7 +1076,7 @@ class WidgetSettings(object):
             widgetUrlStr += '&courseId=' + self.courseId
         if self.learnerId is not None:
             widgetUrlStr += '&learnerId=' + self.learnerId
-        
+
         widgetUrlStr += '&showTitle=' + 'self.showTitle'.lower()
         widgetUrlStr += '&standalone=' + 'self.standalone'.lower()
         if self.iframe:
@@ -801,18 +1092,18 @@ class WidgetSettings(object):
 
         if self.tagSettings is not None:
             widgetUrlStr += self.tagSettings.get_url_encoding()
-        
+
         return widgetUrlStr
 
-    
+
 class DateRangeSettings(object):
-    def __init__(self, dateRangeType, dateRangeStart, 
+    def __init__(self, dateRangeType, dateRangeStart,
                  dateRangeEnd, dateCriteria):
         self.dateRangeType=dateRangeType
         self.dateRangeStart=dateRangeStart
-        self.dateRangeEnd=dateRangeEnd        
+        self.dateRangeEnd=dateRangeEnd
         self.dateCriteria=dateCriteria
-        
+
     def get_url_encoding(self):
         """
         Returns the DateRangeSettings as encoded URL parameters to add to a
@@ -825,33 +1116,33 @@ class DateRangeSettings(object):
             dateRangeStr +='&dateRangeEnd=' + self.dateRangeEnd
         else:
             dateRangeStr +='&dateRangeType=' + self.dateRangeType
-        
+
         dateRangeStr += '&dateCriteria=' + self.dateCriteria
         return dateRangeStr
-        
+
 class TagSettings(object):
     def __init__(self):
         self.tags = {'course':[],'learner':[],'registration':[]}
-    
+
     def add(self, tagType, tagValue):
         self.tags[tagType].append(tagValue)
-        
+
     def get_tag_str(self, tagType):
         return ','.join(set(self.tags[tagType])) + "|_all"
 
     def get_view_tag_str(self, tagType):
         return ','.join(set(self.tags[tagType]))
-        
+
     def get_url_encoding(self):
         tagUrlStr = ''
-        for k in self.tags.keys():
+        for k in list(self.tags.keys()):
             if len(set(self.tags[k])) > 0:
                 tagUrlStr += '&' + k + 'Tags=' + self.get_tag_str(k)
-                tagUrlStr += ('&view' + k.capitalize() + 'TagGroups=' + 
+                tagUrlStr += ('&view' + k.capitalize() + 'TagGroups=' +
                              self.get_view_tag_str(k))
         return tagUrlStr
-    
-    
+
+
 class ScormCloudError(Exception):
     def __init__(self, msg, json=None):
         self.msg = msg
@@ -891,7 +1182,7 @@ class ImportResult(object):
         importresults = xmldoc.getElementsByTagName("importresult")
         for ir in importresults:
             allResults.append(cls(ir))
-        return allResults    
+        return allResults
 
 class CourseData(object):
     courseId = ""
@@ -930,6 +1221,24 @@ class UploadToken(object):
         self.server = server
         self.tokenid = tokenid
 
+class PostbackData(object):
+    registrationId = ""
+
+    @classmethod
+    def list_from_result(cls, xmldoc):
+        """
+        Returns a list of RegistrationData objects by parsing the result of an
+        API method that returns registration elements.
+
+        Arguments:
+        data -- the raw result of the API method
+        """
+        allResults = [];
+        regs = xmldoc.getElementsByTagName("registration")
+        for reg in regs:
+            allResults.append(cls(reg))
+        return allResults
+
 class RegistrationData(object):
     courseId = ""
     registrationId = ""
@@ -954,11 +1263,209 @@ class RegistrationData(object):
             allResults.append(cls(reg))
         return allResults
 
+class ActivityProviderCallbackData(object):
+    @classmethod
+    def activity_provider_from_result(cls, xmldoc):
+        allResults = []
+        ret = "Could not retrieve data"
+        url = xmldoc.getElementsByTagName("activityProvider")
+        try:
+            for reg in url:
+                id = reg.getElementsByTagName("id")[0].firstChild.nodeValue
+                allowedEndpoints = ""
+                permissionsLevel = ""
+
+                try:
+                    allowedEndpoints = reg.getElementsByTagName("allowedEndpoints")[0].firstChild.nodeValue
+                except AttributeError:
+                    allowedEndpoints = "None"
+                try:
+                    permissionsLevel = reg.getElementsByTagName("permissionsLevel")[0].firstChild.nodeValue
+                except AttributeError:
+                    permissionsLevel = "None"
+                allResults.append(ActivityProviderData(id, allowedEndpoints, permissionsLevel))
+            ret = allResults[0]
+        except IndexError:
+            logging.exception('index error')
+        return ret
+
+    @classmethod
+    def activity_providers_from_result(cls, xmldoc):
+        allResults = []
+        ret = "Could not retrieve data"
+        accountProviderList = xmldoc.getElementsByTagName("activityProviderList")
+        try:
+            for reg in accountProviderList:
+                for act in reg.getElementsByTagName("activityProvider"):
+                    id = act.getElementsByTagName("id")[0].firstChild.nodeValue
+                    allowedEndpoints = ""
+                    permissionsLevel = ""
+                    try:
+                        allowedEndpoints = act.getElementsByTagName("allowedEndpoints")[0].firstChild.nodeValue
+                    except AttributeError:
+                        allowedEndpoints = "None"
+                    try:
+                        permissionsLevel = act.getElementsByTagName("permissionsLevel")[0].firstChild.nodeValue
+                    except AttributeError:
+                        permissionsLevel = "None"
+                    allResults.append(ActivityProviderData(id, allowedEndpoints, permissionsLevel))
+            ret = allResults
+        except IndexError:
+            logging.exception('index error')
+
+        return ret
+
+class ActivityProviderData(object):
+    def __init__(self, id, allowedEndpoints, permissionsLevel):
+        self.id = id
+        self.allowedEndpoints = allowedEndpoints
+        self.permissionsLevel = permissionsLevel
+
+class ApplicationCallbackData(object):
+    success = False
+    lrsUrl = ""
+
+    def __init__(self, applicationDataElement):
+        if applicationDataElement is not None:
+            self.lrsUrl = applicationDataElement.childNodes[0].nodeValue
+
+    @classmethod
+    def get_success(cls, xmldoc):
+        """
+        Returns true if the given xml doc contains the "success" node, false otherwise
+
+        Arguments:
+        xmldoc -- the raw result of the API method
+        """
+        suc = xmldoc.getElementsByTagName("success")
+        if suc[0].nodeName == 'success':
+            return True
+        return False
+
+    @classmethod
+    def list_from_result(cls, xmldoc):
+        """
+        Returns a string containing the LRS Auth Callback Url for the configured app
+
+        Arguments:
+        xmldoc -- the raw result of the API method
+        """
+        allResults = []
+        ret = "Could not retrieve URL"
+        url = xmldoc.getElementsByTagName("application")
+        try:
+            for reg in url:
+                appId = reg.getElementsByTagName("appId")[0].firstChild.nodeValue
+                appName = reg.getElementsByTagName("name")[0].firstChild.nodeValue
+                allResults.append(app_summary_data(appId, appName))
+
+            ret = allResults[0]
+        except IndexError:
+            logging.exception('failed')
+        return ret
+
+    @classmethod
+    def list_from_list(cls, xmldoc):
+        """
+        applicationlist
+        """
+        allResults = []
+        ret = "Could not retrieve list"
+        li = xmldoc.getElementsByTagName("applicationlist")
+        try:
+            for reg in li:
+                t = reg.childNodes
+                for s in t:
+                    appId = s.getElementsByTagName("appId")[0].firstChild.nodeValue
+                    appName = s.getElementsByTagName("name")[0].firstChild.nodeValue
+                    allResults.append(app_summary_data(appId, appName))
+        except IndexError:
+            logging.exception('failed to convert to list')
+
+        if len(allResults) > 0:
+            ret = allResults
+
+        return ret
+
+class app_summary_data(object):
+    def __init__(self, appId, name):
+        self.appId = appId
+        self.name = name
+
+class SuperUserData(object):
+    success = False
+
+    @classmethod
+    def get_success(cls, xmldoc):
+        suc = xmldoc.getElementsByTagName("success")
+        if suc[0].nodeName == 'success':
+            return True
+        return False
+
+    @classmethod
+    def list_from_result(cls, xmldoc):
+        allResults = []
+        ret = False
+        li = xmldoc.getElementsByTagName("applicationidlist")
+        try:
+            for reg in li:
+                for s in reg.getElementsByTagName("applicationid"):
+                    allResults.append(s.firstChild.nodeValue)
+        except urllib.error.HTTPError:
+            logging.exception('failed')
+
+        if len(allResults) > 0:
+            ret = allResults
+
+        return ret
+
+class LrsCallbackData(object):
+    success = False
+    lrsUrl = ""
+
+    def __init__(self, lrsDataElement):
+        if lrsDataElement is not None:
+            #self.wasSuccessful = (importResultElement.attributes['successful']
+            self.lrsUrl = lrsDataElement.childNodes[0].nodeValue
+
+
+    @classmethod
+    def get_success(cls, xmldoc):
+        """
+        Returns true if the given xml doc contains the "success" node, false otherwise
+
+        Arguments:
+        xmldoc -- the raw result of the API method
+        """
+        suc = xmldoc.getElementsByTagName("success")
+        if suc[0].nodeName == 'success':
+            return True
+        return False
+
+    @classmethod
+    def list_from_result(cls, xmldoc):
+        """
+        Returns a string containing the LRS Auth Callback Url for the configured app
+
+        Arguments:
+        xmldoc -- the raw result of the API method
+        """
+        allResults = [];
+        ret = "Could not retrieve URL"
+        url = xmldoc.getElementsByTagName("lrsAuthCallbackUrl")
+        try:
+            for reg in url:
+                allResults.append(cls(reg))
+
+            ret = allResults[0].lrsUrl
+        except IndexError:
+            logging.exception('failed')
+        return ret
 
 class ServiceRequest(object):
     """
     Helper object that handles the details of web service URLs and parameter
-    encoding and signing. Set the web service method parameters on the 
+    encoding and signing. Set the web service method parameters on the
     parameters attribute of the ServiceRequest object and then call
     call_service with the method name to make a service request.
     """
@@ -997,18 +1504,18 @@ class ServiceRequest(object):
             single call
         """
         params = {'method': method}
-        
+
         #          'appid': self.service.config.appid,
         #          'origin': self.service.config.origin,
         #          'ts': datetime.datetime.utcnow().strftime('yyyyMMddHHmmss'),
         #          'applib': 'python'}
-        for k, v in self.parameters.iteritems():
+        for k, v in self.parameters.items():
             params[k] = v
         url = self.service.config.serviceurl
         if serviceurl is not None:
             url = serviceurl
         url = (ScormCloudUtilities.clean_cloud_host_url(url) + '?' +
-              self._encode_and_sign(params))
+               self._encode_and_sign(params))
         return url
 
     def get_xml(self, raw):
@@ -1020,16 +1527,21 @@ class ServiceRequest(object):
         raw -- the raw response string from an API method call
         """
         xmldoc = minidom.parseString(raw)
+        x = etree.XML(raw)
+        
+        if logging.root.isEnabledFor(logging.DEBUG):
+            logging.debug(etree.tostring(x, pretty_print=True).decode('utf8'))
+
         rsp = xmldoc.documentElement
         if rsp.attributes['stat'].value != 'ok':
             err = rsp.firstChild
             raise Exception('SCORM Cloud Error: %s - %s' %
-                            (err.attributes['code'].value, 
+                            (err.attributes['code'].value,
                              err.attributes['msg'].value))
         return xmldoc
 
     def send_post(self, url, postparams):
-        cloudsocket = urllib2.urlopen(url, postparams)
+        cloudsocket = urllib.request.urlopen(url, postparams, 2000)
         reply = cloudsocket.read()
         cloudsocket.close()
         return reply
@@ -1041,19 +1553,21 @@ class ServiceRequest(object):
 
         Arguments:
         dictionary -- the dictionary containing the key/value parameter pairs
-        """ 
+        """
         dictionary['appid'] = self.service.config.appid
         dictionary['origin'] = self.service.config.origin;
         dictionary['ts'] = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
         dictionary['applib'] = "python"
-        dictionary = make_utf8(dictionary)
         signing = ''
         values = list()
         secret = self.service.config.secret
-        for key in sorted(dictionary.keys(), key=str.lower):
+        for key in sorted(list(dictionary.keys()), key=str.lower):
             signing += key + dictionary[key]
-            values.append(key + '=' + urllib.quote_plus(dictionary[key]))
-        values.append('sig=' + md5(secret + signing).hexdigest())
+            values.append(key + '=' + urllib.parse.quote_plus(dictionary[key]))
+
+        sig = md5(secret.encode('utf8') + signing.encode('utf8')).hexdigest()
+        values.append('sig=' + sig)
+
         return '&'.join(values)
 
 
@@ -1098,4 +1612,3 @@ class ScormCloudUtilities(object):
         if not parts[len(parts) - 1] == 'api':
             parts.append('api')
         return '/'.join(parts)
-
