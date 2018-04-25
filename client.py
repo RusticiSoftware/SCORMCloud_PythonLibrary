@@ -2,7 +2,7 @@ import datetime
 import logging
 import re
 import sys
-import urllib.request, urllib.parse, urllib.error
+from six.moves import urllib
 import ssl
 import uuid
 import requests
