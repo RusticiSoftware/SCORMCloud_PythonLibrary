@@ -1,8 +1,11 @@
+import cgi
 import datetime
 import logging
+import os
 import re
 import sys
 from six.moves import urllib
+import urllib2
 import ssl
 import uuid
 import requests
@@ -478,13 +481,15 @@ class CourseService(object):
         request.parameters['courseid'] = courseid
         return request.call_service('rustici.course.deleteCourse')
 
-    def get_assets(self, courseid, path=None):
+    def get_assets(self, courseid, pathToSave=None, path=None):
         """
         Downloads a file from a course by path. If no path is provided, all the
         course files will be downloaded contained in a zip file.
 
         Arguments:
         courseid -- the unique identifier for the course
+        pathToSave -- the path where the downloaded content should be saved.
+            If not provided or is None, the file will be saved at the location of this file.
         path -- the path (relative to the course root) of the file to download.
             If not provided or is None, all course files will be downloaded.
         """
@@ -492,7 +497,7 @@ class CourseService(object):
         request.parameters['courseid'] = courseid
         if (path is not None):
             request.parameters['path'] = path
-        return request.call_service('rustici.course.getAssets')
+        request.download_file('rustici.course.getAssets', pathToSave)
 
     def get_course_list(self, courseIdFilterRegex=None):
         """
@@ -1524,6 +1529,36 @@ class ServiceRequest(object):
         rawresponse = self.send_post(url, postparams)
         response = self.get_xml(rawresponse)
         return response
+
+
+    def download_file(self, method, pathToSave=None):
+      """
+      Calls the specified web service method using any parameters set on the
+      ServiceRequest.  Assumes that the resource returned is meant to be downloaded.
+      Returns the absolute path to the saved resource
+
+       Arguments:
+       method -- the full name of the web service method to call.
+           For example: rustici.registration.createRegistration
+       pathToSave -- the absolute path where the file should be saved once downloaded.
+      """
+      url = self.construct_url(method)
+      u = urllib2.urlopen(url)
+      filename = cgi.parse_header(u.headers.get("Content-Disposition"))[1]['filename']
+      if 'path' in self.parameters and self.parameters['path'] is not None:
+        filename = os.path.split(self.parameters['path'])[1]
+      filepath = os.path.join(pathToSave or os.getcwd(), filename)
+      print "Beginning download of %s" % filename
+      file_size = 0
+      with open(filepath, 'wb') as f:
+        while True:
+          buffer = u.read(8192)
+          if not buffer:
+            break
+          file_size += len(buffer)
+          f.write(buffer)
+        print "Completed download of %s (%sb)" % (filename, file_size)
+      return filepath
 
     def construct_url(self, method, serviceurl=None):
         """
