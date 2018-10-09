@@ -481,7 +481,7 @@ class CourseService(object):
         request.parameters['courseid'] = courseid
         return request.call_service('rustici.course.deleteCourse')
 
-    def get_assets(self, courseid, pathToSave=None, path=None):
+    def get_assets(self, courseid, pathToSave, path=None):
         """
         Downloads a file from a course by path. If no path is provided, all the
         course files will be downloaded contained in a zip file.
@@ -1531,7 +1531,7 @@ class ServiceRequest(object):
         return response
 
 
-    def download_file(self, method, pathToSave=None):
+    def download_file(self, method, pathToSave):
       """
       Calls the specified web service method using any parameters set on the
       ServiceRequest.  Assumes that the resource returned is meant to be downloaded.
@@ -1547,17 +1547,13 @@ class ServiceRequest(object):
       filename = cgi.parse_header(u.headers.get("Content-Disposition"))[1]['filename']
       if 'path' in self.parameters and self.parameters['path'] is not None:
         filename = os.path.split(self.parameters['path'])[1]
-      filepath = os.path.join(pathToSave or os.getcwd(), filename)
-      print "Beginning download of %s" % filename
-      file_size = 0
+      filepath = os.path.join(pathToSave, filename)
       with open(filepath, 'wb') as f:
         while True:
           buffer = u.read(8192)
           if not buffer:
             break
-          file_size += len(buffer)
           f.write(buffer)
-        print "Completed download of %s (%sb)" % (filename, file_size)
       return filepath
 
     def construct_url(self, method, serviceurl=None):
